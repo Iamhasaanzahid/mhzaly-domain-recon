@@ -123,3 +123,69 @@ docker-compose up
 ---
 
 ## 🎓 Architecture
+User Input (Domain)
+↓
+Deterministic Recon (90%)
+├─ DNS queries
+├─ SSL parsing
+├─ WHOIS lookup
+├─ Subfinder scan
+└─ Tech detection
+↓
+AI Analysis (10%)
+├─ Risk scoring
+├─ Vuln detection
+├─ Attack mapping
+└─ Report generation
+↓
+UI Display + Export
+
+---
+
+## 🛠️ Tech Stack
+
+- **Frontend:** Streamlit
+- **Backend:** Python 3.8+
+- **AI:** Anthropic Claude API
+- **Recon:** dnspython, python-whois, subprocess (subfinder)
+- **Data:** pandas
+- **Deployment:** Docker, Docker Compose
+
+---
+
+## 📈 Future Enhancements
+
+- [ ] Nmap port scanning
+- [ ] Shodan API integration
+- [ ] Batch domain analysis
+- [ ] Database persistence
+- [ ] Slack notifications
+- [ ] REST API backend
+
+See [ROADMAP.md](ROADMAP.md) for detailed plans.
+
+---
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## ⚠️ Legal
+
+This tool is for authorized security testing only. Ensure you have permission before scanning any domain.
+
+---
+
+## 📄 License
+
+MIT License - See [LICENSE](LICENSE)
+
+---
+
+## 🙌 Credits
+
+Built for cybersecurity professionals and bug bounty hunters.
+
+**Happy Hunting! 🎯**
