@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  recon-analyzer:
+    build: .
+    container_name: mhzaly-recon-analyzer
+    ports:
+      - "8501:8501"
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ./reports:/app/reports
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
