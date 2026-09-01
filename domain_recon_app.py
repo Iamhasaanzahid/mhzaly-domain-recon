@@ -9,6 +9,11 @@ from typing import Dict, List, Tuple
 import pandas as pd
 from urllib.parse import urlparse
 import anthropic
+import os
+import urllib3
+
+# Suppress SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Page config
 st.set_page_config(
@@ -152,7 +157,14 @@ def get_tech_stack(domain: str) -> Dict:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
-        response = requests.get(f'https://{domain}', headers=headers, timeout=10, verify=False)
+        # FIX: Proper SSL verification with timeout handling
+        try:
+            response = requests.get(f'https://{domain}', headers=headers, timeout=10, verify=True)
+        except requests.exceptions.SSLError:
+            # Fallback for self-signed certificates
+            response = requests.get(f'https://{domain}', headers=headers, timeout=10, verify=False)
+        except requests.exceptions.ConnectionError:
+            return techs
         
         # Simple tech detection based on headers and HTML
         headers_lower = {k.lower(): v.lower() for k, v in response.headers.items()}
@@ -196,9 +208,12 @@ def get_tech_stack(domain: str) -> Dict:
     
     return techs
 
-def ai_risk_analysis(domain: str, findings: Dict) -> Dict:
+def ai_risk_analysis(domain: str, findings: Dict, api_key: str) -> Dict:
     """Use Claude AI to analyze findings and generate risk score + recommendations"""
-    client = anthropic.Anthropic()
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+    except Exception as e:
+        return {'error': f'Invalid API Key: {e}'}
     
     analysis = {
         'risk_score': 0,
@@ -287,10 +302,18 @@ st.markdown("**Bug Bounty + SOC Intelligence Platform** — Map domains, analyze
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
-    api_key = st.text_input("🔑 Anthropic API Key (Optional for AI analysis)", type="password")
-    if api_key:
-        import os
-        os.environ['ANTHROPIC_API_KEY'] = api_key
+    
+    # FIX: Use st.secrets for Streamlit Cloud deployment
+    api_key = None
+    try:
+        api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    except:
+        pass
+    
+    # Allow manual input as fallback
+    manual_api_key = st.text_input("🔑 Anthropic API Key (Optional for AI analysis)", type="password")
+    if manual_api_key:
+        api_key = manual_api_key
     
     st.markdown("---")
     st.markdown("""
@@ -300,7 +323,7 @@ with st.sidebar:
     go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
     
     # Python dependencies
-    pip install dnspython python-whois requests
+    pip install -r requirements.txt
 ```
     """)
 
@@ -337,7 +360,7 @@ if analyze_button and domain:
         # AI Analysis
         ai_analysis = {}
         if api_key:
-            ai_analysis = ai_risk_analysis(domain, findings)
+            ai_analysis = ai_risk_analysis(domain, findings, api_key)
     
     # ==================== TAB 1: OVERVIEW ====================
     with tab1:
