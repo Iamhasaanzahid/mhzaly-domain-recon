@@ -5,11 +5,10 @@ import socket
 import ssl
 import requests
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import pandas as pd
 from urllib.parse import urlparse
 import google.generativeai as genai
-import os
 import urllib3
 
 # Suppress SSL warnings
@@ -60,7 +59,7 @@ def get_dns_records(domain: str) -> Dict:
             except:
                 records[record_type] = []
     except ImportError:
-        records['error'] = "dnspython not installed. Run: pip install dnspython"
+        records['error'] = "dnspython not installed"
     
     return records
 
@@ -73,7 +72,6 @@ def get_ssl_certificate(domain: str) -> Dict:
         'subject': None,
         'expiry': None,
         'serial': None,
-        'version': None,
         'error': None
     }
     
@@ -82,7 +80,6 @@ def get_ssl_certificate(domain: str) -> Dict:
         with socket.create_connection((domain, 443), timeout=5) as sock:
             with context.wrap_socket(sock, server_hostname=domain) as ssock:
                 cert = ssock.getpeercert()
-                cert_bin = ssock.getpeercert(binary_form=True)
                 
                 if cert:
                     cert_info['valid'] = True
@@ -116,7 +113,7 @@ def get_whois_info(domain: str) -> Dict:
         whois_data['updated'] = str(w.updated_date) if hasattr(w, 'updated_date') else None
         whois_data['status'] = str(w.status) if hasattr(w, 'status') else None
     except ImportError:
-        whois_data['error'] = "whois not installed. Run: pip install python-whois"
+        whois_data['error'] = "whois not installed"
     except Exception as e:
         whois_data['error'] = str(e)
     
@@ -138,133 +135,81 @@ def run_subfinder(domain: str) -> List[str]:
     except FileNotFoundError:
         return []
     except Exception as e:
-        st.warning(f"Subfinder error: {e}")
         return []
 
 def get_tech_stack(domain: str) -> Dict:
-    """Detect technologies using manual checks + Wappalyzer logic"""
+    """Detect technologies"""
     techs = {
         'web_servers': [],
         'cms': [],
         'js_frameworks': [],
-        'db': [],
         'cdn': [],
-        'analytics': [],
-        'other': []
+        'analytics': []
     }
     
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
-        # FIX: Proper SSL verification with timeout handling
         try:
-            response = requests.get(f'https://{domain}', headers=headers, timeout=10, verify=True)
-        except requests.exceptions.SSLError:
-            # Fallback for self-signed certificates
             response = requests.get(f'https://{domain}', headers=headers, timeout=10, verify=False)
-        except requests.exceptions.ConnectionError:
+        except:
             return techs
         
-        # Simple tech detection based on headers and HTML
         headers_lower = {k.lower(): v.lower() for k, v in response.headers.items()}
         content = response.text.lower()
         
-        # Server detection
         if 'server' in headers_lower:
             techs['web_servers'].append(headers_lower['server'])
         
-        # Framework detection
         if 'wordpress' in content or 'wp-content' in content:
             techs['cms'].append('WordPress')
         if 'drupal' in content:
             techs['cms'].append('Drupal')
-        if 'joomla' in content:
-            techs['cms'].append('Joomla')
         
-        if 'react' in content or 'react.js' in content:
+        if 'react' in content:
             techs['js_frameworks'].append('React')
         if 'angular' in content:
             techs['js_frameworks'].append('Angular')
-        if 'vue' in content:
-            techs['js_frameworks'].append('Vue.js')
         
-        # CDN detection
         if 'cloudflare' in content or headers_lower.get('cf-ray'):
             techs['cdn'].append('Cloudflare')
-        if 'akamai' in content:
-            techs['cdn'].append('Akamai')
-        if 'cloudfront' in headers_lower.get('via', ''):
-            techs['cdn'].append('CloudFront')
         
-        # Analytics
-        if 'google-analytics' in content or 'ga.js' in content:
+        if 'google-analytics' in content:
             techs['analytics'].append('Google Analytics')
-        if 'segment' in content:
-            techs['analytics'].append('Segment')
         
-    except Exception as e:
+    except Exception:
         pass
     
     return techs
 
 def ai_risk_analysis(domain: str, findings: Dict, api_key: str) -> Dict:
-    """Use Google Gemini AI to analyze findings and generate risk score + recommendations"""
-    try:
-        genai.configure(api_key=api_key)
-    except Exception as e:
-        return {'error': f'Invalid API Key: {e}'}
-    
+    """Use Google Gemini AI to analyze findings"""
     analysis = {
         'risk_score': 0,
         'risk_level': 'UNKNOWN',
         'findings': [],
         'recommendations': [],
-        'attack_surface': [],
         'error': None
     }
     
     try:
+        genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-pro')
         
-        prompt = f"""Analyze this domain reconnaissance data and provide security assessment:
-
+        prompt = f"""Analyze this domain security data and respond ONLY with valid JSON (no markdown):
 Domain: {domain}
-DNS Records: {json.dumps(findings.get('dns', {}))}
-SSL Certificate: {json.dumps(findings.get('ssl', {}), default=str)}
-WHOIS: {json.dumps(findings.get('whois', {}))}
-Technologies: {json.dumps(findings.get('tech_stack', {}))}
-Subdomains Found: {findings.get('subdomains_count', 0)}
+DNS: {json.dumps(findings.get('dns', {}))}
+SSL: {json.dumps(findings.get('ssl', {}), default=str)}
+Tech: {json.dumps(findings.get('tech_stack', {}))}
+Subdomains: {findings.get('subdomains_count', 0)}
 
-Respond ONLY in this JSON format (no markdown, no extra text):
-{{
-    "risk_score": <0-100>,
-    "risk_level": "<CRITICAL|HIGH|MEDIUM|LOW>",
-    "key_findings": [
-        "finding1",
-        "finding2"
-    ],
-    "vulnerabilities": [
-        {{"tech": "...", "potential_vuln": "...", "severity": "<CRITICAL|HIGH|MEDIUM|LOW>"}},
-    ],
-    "attack_surface": [
-        "attack_path_1",
-        "attack_path_2"
-    ],
-    "recommendations": [
-        "recommendation1",
-        "recommendation2"
-    ],
-    "testing_priorities": [
-        "test_1",
-        "test_2"
-    ]
-}}"""
+Response format:
+{{"risk_score": 0-100, "risk_level": "LOW|MEDIUM|HIGH|CRITICAL", "findings": ["finding1"], "recommendations": ["rec1"]}}"""
         
         response = model.generate_content(prompt)
         response_text = response.text.strip()
         
-        # Remove markdown code blocks if present
         if response_text.startswith('```'):
             response_text = response_text.split('```')[1]
             if response_text.startswith('json'):
@@ -275,14 +220,9 @@ Respond ONLY in this JSON format (no markdown, no extra text):
         
         analysis['risk_score'] = ai_result.get('risk_score', 0)
         analysis['risk_level'] = ai_result.get('risk_level', 'UNKNOWN')
-        analysis['findings'] = ai_result.get('key_findings', [])
-        analysis['vulnerabilities'] = ai_result.get('vulnerabilities', [])
-        analysis['attack_surface'] = ai_result.get('attack_surface', [])
+        analysis['findings'] = ai_result.get('findings', [])
         analysis['recommendations'] = ai_result.get('recommendations', [])
-        analysis['testing_priorities'] = ai_result.get('testing_priorities', [])
         
-    except json.JSONDecodeError as e:
-        analysis['error'] = f"Failed to parse AI response: {e}"
     except Exception as e:
         analysis['error'] = str(e)
     
@@ -291,35 +231,23 @@ Respond ONLY in this JSON format (no markdown, no extra text):
 # ==================== MAIN APP ====================
 
 st.title("🔍 MHZALY Domain Recon Analyzer")
-st.markdown("**Bug Bounty + SOC Intelligence Platform** — Map domains, analyze attack surface, prioritize testing")
+st.markdown("**Bug Bounty + Security Intelligence Platform**")
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # FIX: Use st.secrets for Streamlit Cloud deployment
     api_key = None
     try:
         api_key = st.secrets.get("GEMINI_API_KEY", "")
     except:
         pass
     
-    # Allow manual input as fallback
-    manual_api_key = st.text_input("🔑 Google Gemini API Key (Optional for AI analysis)", type="password")
-    if manual_api_key:
-        api_key = manual_api_key
+    if not api_key:
+        api_key = st.text_input("🔑 Gemini API Key", type="password")
     
     st.markdown("---")
-    st.markdown("""
-    ### How to Install Tools
-```bash
-    # Subfinder
-    go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-    
-    # Python dependencies
-    pip install -r requirements.txt
-```
-    """)
+    st.info("ℹ️ Get free API key at ai.google.dev")
 
 # Main input
 col1, col2 = st.columns([3, 1])
@@ -333,12 +261,10 @@ if analyze_button and domain:
     
     st.markdown("---")
     
-    # Create tabs for organization
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Overview", "🌐 Infrastructure", "🔐 Security", "🎯 Attack Surface", "📋 Report"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "🌐 Infrastructure", "🔐 Security", "📋 Report"])
     
     with st.spinner("🔄 Gathering reconnaissance data..."):
         
-        # Collect data
         findings = {
             'domain': domain,
             'timestamp': datetime.now().isoformat(),
@@ -351,26 +277,23 @@ if analyze_button and domain:
         
         findings['subdomains_count'] = len(findings['subdomains'])
         
-        # AI Analysis
         ai_analysis = {}
         if api_key:
             ai_analysis = ai_risk_analysis(domain, findings, api_key)
     
-    # ==================== TAB 1: OVERVIEW ====================
+    # TAB 1: OVERVIEW
     with tab1:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             if ai_analysis and 'risk_score' in ai_analysis:
-                st.metric("Risk Score", f"{ai_analysis['risk_score']}/100", delta=None)
+                st.metric("Risk Score", f"{ai_analysis['risk_score']}/100")
             else:
                 st.metric("Subdomains", findings['subdomains_count'])
         
         with col2:
             if ai_analysis and 'risk_level' in ai_analysis:
-                level = ai_analysis['risk_level']
-                color_class = f"status-{level.lower()}"
-                st.markdown(f"**Risk Level** <br><span class='{color_class}'>{level}</span>", unsafe_allow_html=True)
+                st.metric("Risk Level", ai_analysis['risk_level'])
             else:
                 st.metric("DNS Records", len([r for r in findings['dns'].values() if isinstance(r, list) and r]))
         
@@ -379,8 +302,8 @@ if analyze_button and domain:
             st.metric("Technologies", tech_count)
         
         with col4:
-            ssl_valid = "✅ Valid" if findings['ssl'].get('valid') else "❌ Invalid/Missing"
-            st.metric("SSL Status", ssl_valid)
+            ssl_status = "✅ Valid" if findings['ssl'].get('valid') else "❌ Invalid"
+            st.metric("SSL Status", ssl_status)
         
         st.markdown("---")
         
@@ -389,19 +312,14 @@ if analyze_button and domain:
             for finding in ai_analysis['findings']:
                 st.warning(finding)
     
-    # ==================== TAB 2: INFRASTRUCTURE ====================
+    # TAB 2: INFRASTRUCTURE
     with tab2:
-        st.subheader("📍 Subdomains Discovered")
+        st.subheader("📍 Subdomains")
         if findings['subdomains']:
-            df_subs = pd.DataFrame({'Subdomain': findings['subdomains']})
-            st.dataframe(df_subs, use_container_width=True)
-            st.download_button(
-                "📥 Download Subdomains",
-                data='\n'.join(findings['subdomains']),
-                file_name=f"{domain}_subdomains.txt"
-            )
+            df = pd.DataFrame({'Subdomain': findings['subdomains']})
+            st.dataframe(df, use_container_width=True)
         else:
-            st.info("No subdomains found (subfinder may not be installed)")
+            st.info("No subdomains found")
         
         st.markdown("---")
         st.subheader("🌐 DNS Records")
@@ -422,123 +340,51 @@ if analyze_button and domain:
                 for ns in findings['dns']['NS']:
                     st.code(ns)
     
-    # ==================== TAB 3: SECURITY ====================
+    # TAB 3: SECURITY
     with tab3:
         st.subheader("🔐 SSL Certificate")
         if findings['ssl'].get('valid'):
             col1, col2 = st.columns(2)
             with col1:
-                st.write(f"**Issuer:** {findings['ssl'].get('issuer', 'Unknown')}")
-                st.write(f"**Subject:** {findings['ssl'].get('subject', 'Unknown')}")
+                st.write(f"**Issuer:** {findings['ssl'].get('issuer', 'N/A')}")
             with col2:
-                st.write(f"**Expiry:** {findings['ssl'].get('expiry', 'Unknown')}")
-                st.write(f"**Serial:** {findings['ssl'].get('serial', 'Unknown')}")
+                st.write(f"**Expiry:** {findings['ssl'].get('expiry', 'N/A')}")
         else:
-            st.error(f"SSL Error: {findings['ssl'].get('error', 'Unknown error')}")
+            st.error(f"SSL Error: {findings['ssl'].get('error', 'Unknown')}")
         
         st.markdown("---")
-        st.subheader("🛠 Technologies Detected")
+        st.subheader("🛠 Technologies")
         if findings['tech_stack']:
             for category, techs in findings['tech_stack'].items():
                 if techs:
-                    st.write(f"**{category.replace('_', ' ').title()}**")
-                    for tech in techs:
-                        st.badge(tech)
-        
-        st.markdown("---")
-        st.subheader("📋 WHOIS Information")
-        if not findings['whois'].get('error'):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**Registrar:** {findings['whois'].get('registrar', 'Unknown')}")
-                st.write(f"**Created:** {findings['whois'].get('created', 'Unknown')}")
-            with col2:
-                st.write(f"**Expires:** {findings['whois'].get('expires', 'Unknown')}")
-                st.write(f"**Updated:** {findings['whois'].get('updated', 'Unknown')}")
-        else:
-            st.warning(f"WHOIS Error: {findings['whois'].get('error')}")
+                    st.write(f"**{category.replace('_', ' ').title()}:** {', '.join(techs)}")
     
-    # ==================== TAB 4: ATTACK SURFACE ====================
+    # TAB 4: REPORT
     with tab4:
-        if ai_analysis.get('vulnerabilities'):
-            st.subheader("⚠️ Potential Vulnerabilities")
-            for vuln in ai_analysis['vulnerabilities']:
-                severity = vuln.get('severity', 'MEDIUM').lower()
-                with st.container(border=True):
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.write(f"**{vuln.get('tech')}**")
-                        st.caption(vuln.get('potential_vuln'))
-                    with col2:
-                        st.metric("Severity", vuln.get('severity', 'N/A'))
-        
-        if ai_analysis.get('attack_surface'):
-            st.markdown("---")
-            st.subheader("🎯 Attack Paths")
-            for i, path in enumerate(ai_analysis['attack_surface'], 1):
-                st.write(f"{i}. {path}")
-        
-        if ai_analysis.get('testing_priorities'):
-            st.markdown("---")
-            st.subheader("🚀 Testing Priorities (For Bug Bounty)")
-            for i, test in enumerate(ai_analysis['testing_priorities'], 1):
-                st.write(f"**{i}.** {test}")
-    
-    # ==================== TAB 5: REPORT ====================
-    with tab5:
-        st.subheader("📊 Executive Summary")
+        st.subheader("📊 Summary")
         if ai_analysis:
             if ai_analysis.get('recommendations'):
                 st.write("**Recommendations:**")
                 for rec in ai_analysis['recommendations']:
                     st.write(f"- {rec}")
         
-        # Export options
         st.markdown("---")
-        st.subheader("💾 Export")
         
-        # JSON export
         json_export = json.dumps({
             **findings,
             'ai_analysis': ai_analysis
         }, indent=2, default=str)
         
         st.download_button(
-            "📥 Download Full Report (JSON)",
+            "📥 Download Report (JSON)",
             data=json_export,
             file_name=f"{domain}_recon_report.json",
             mime="application/json"
         )
-        
-        # Text export
-        text_report = f"""DOMAIN RECONNAISSANCE REPORT
-{domain}
-Generated: {findings['timestamp']}
 
-RISK LEVEL: {ai_analysis.get('risk_level', 'N/A')} (Score: {ai_analysis.get('risk_score', 'N/A')}/100)
-
-KEY FINDINGS:
-{chr(10).join(f"- {f}" for f in ai_analysis.get('findings', []))}
-
-SUBDOMAINS FOUND: {findings['subdomains_count']}
-
-TECHNOLOGIES: {', '.join(str(t) for techs in findings['tech_stack'].values() for t in techs if techs)}
-
-RECOMMENDATIONS:
-{chr(10).join(f"- {r}" for r in ai_analysis.get('recommendations', []))}
-"""
-        
-        st.download_button(
-            "📥 Download Report (Text)",
-            data=text_report,
-            file_name=f"{domain}_recon_report.txt"
-        )
-
-# Footer
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #888; font-size: 0.9rem;">
-    <p>MHZALY Domain Recon Analyzer | Built for Bug Bounty Hunters & SOC Analysts</p>
-    <p>90% Deterministic + 10% AI Intelligence | <a href="https://github.com">Open Source</a></p>
+    <p>MHZALY Domain Recon Analyzer | Security Intelligence</p>
 </div>
 """, unsafe_allow_html=True)
