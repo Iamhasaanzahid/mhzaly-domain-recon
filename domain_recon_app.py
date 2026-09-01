@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Dict, List, Tuple
 import pandas as pd
 from urllib.parse import urlparse
-import anthropic
+import google.generativeai as genai
 import os
 import urllib3
 
@@ -209,9 +209,9 @@ def get_tech_stack(domain: str) -> Dict:
     return techs
 
 def ai_risk_analysis(domain: str, findings: Dict, api_key: str) -> Dict:
-    """Use Claude AI to analyze findings and generate risk score + recommendations"""
+    """Use Google Gemini AI to analyze findings and generate risk score + recommendations"""
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        genai.configure(api_key=api_key)
     except Exception as e:
         return {'error': f'Invalid API Key: {e}'}
     
@@ -225,6 +225,8 @@ def ai_risk_analysis(domain: str, findings: Dict, api_key: str) -> Dict:
     }
     
     try:
+        model = genai.GenerativeModel('gemini-pro')
+        
         prompt = f"""Analyze this domain reconnaissance data and provide security assessment:
 
 Domain: {domain}
@@ -259,15 +261,9 @@ Respond ONLY in this JSON format (no markdown, no extra text):
     ]
 }}"""
         
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
+        response = model.generate_content(prompt)
+        response_text = response.text.strip()
         
-        response_text = message.content[0].text.strip()
         # Remove markdown code blocks if present
         if response_text.startswith('```'):
             response_text = response_text.split('```')[1]
@@ -287,8 +283,6 @@ Respond ONLY in this JSON format (no markdown, no extra text):
         
     except json.JSONDecodeError as e:
         analysis['error'] = f"Failed to parse AI response: {e}"
-    except anthropic.APIError as e:
-        analysis['error'] = f"API Error: {e}"
     except Exception as e:
         analysis['error'] = str(e)
     
@@ -306,12 +300,12 @@ with st.sidebar:
     # FIX: Use st.secrets for Streamlit Cloud deployment
     api_key = None
     try:
-        api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+        api_key = st.secrets.get("GEMINI_API_KEY", "")
     except:
         pass
     
     # Allow manual input as fallback
-    manual_api_key = st.text_input("🔑 Anthropic API Key (Optional for AI analysis)", type="password")
+    manual_api_key = st.text_input("🔑 Google Gemini API Key (Optional for AI analysis)", type="password")
     if manual_api_key:
         api_key = manual_api_key
     
